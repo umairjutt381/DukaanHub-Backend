@@ -8,7 +8,7 @@ FastAPI backend for DukaanHub.
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env
+cp .env .env
 python3 -m uvicorn backend.app.main:app --reload --port 8000
 ```
 
