@@ -60,6 +60,8 @@ class Settings(BaseSettings):
     payment_method_stripe_enabled: PaymentMethodEnabled = False
     frontend_base_url: str = "http://localhost:3000"
     google_client_secrets_file: str = ""
+    google_client_id: str = ""
+    google_client_secret: str = ""
     google_redirect_uri: str = "http://localhost:8000/api/v1/auth/google/callback"
 
     @property
