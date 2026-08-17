@@ -39,6 +39,8 @@ def _callback_redirect(callback_url: str, return_to: str, error: str) -> Redirec
 
 def _google_credentials() -> tuple[str, str]:
     settings = get_settings()
+    if settings.google_client_id and settings.google_client_secret:
+        return settings.google_client_id, settings.google_client_secret
     if not settings.google_client_secrets_file:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Google sign-in is not configured")
     try:
