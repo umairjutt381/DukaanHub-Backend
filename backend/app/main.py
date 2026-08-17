@@ -50,7 +50,9 @@ if os.environ.get("VERCEL") != "1":
     uploads_path = Path(settings.upload_dir)
     uploads_path.mkdir(parents=True, exist_ok=True)
     app.mount("/uploads", StaticFiles(directory=settings.upload_dir), name="uploads")
-    app.mount("/brand", StaticFiles(directory=str(ROOT_DIR / "public" / "brand")), name="brand")
+    brand_path = ROOT_DIR / "public" / "brand"
+    if brand_path.is_dir():
+        app.mount("/brand", StaticFiles(directory=str(brand_path)), name="brand")
 
 app.include_router(health_router, prefix=settings.api_v1_prefix)
 app.include_router(auth_router, prefix=settings.api_v1_prefix)
