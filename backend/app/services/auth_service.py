@@ -13,11 +13,12 @@ class AuthService:
         self.db = db
 
     def register(self, full_name: str, email: str, password: str, phone: str | None = None) -> User:
-        if self.db.query(User).filter(User.email == email).first():
+        normalized_email = email.strip().lower()
+        if self.db.query(User).filter(User.email == normalized_email).first():
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered")
         user = User(
             full_name=full_name,
-            email=email.lower(),
+            email=normalized_email,
             phone=phone,
             hashed_password=get_password_hash(password),
             role="customer",
@@ -33,6 +34,8 @@ class AuthService:
         user = self.db.query(User).filter(User.email == email.lower()).first()
         if not user or not verify_password(password, user.hashed_password):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+        if not user.is_active:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account is disabled")
         settings = get_settings()
         expires = timedelta(days=settings.refresh_token_expire_days if remember_me else 1)
         token = create_access_token(subject=str(user.id), expires_delta=expires, extra={"role": user.role})

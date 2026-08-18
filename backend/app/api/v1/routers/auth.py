@@ -4,7 +4,7 @@ from pathlib import Path
 from urllib.parse import urlencode, urlparse
 
 import httpx
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, BackgroundTasks, Cookie, Depends, HTTPException, Query, Request, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
@@ -12,9 +12,11 @@ from backend.app.core.config import get_settings
 from backend.app.core.deps import get_current_user
 from backend.app.core.security import create_access_token
 from backend.app.db.session import get_db
+from backend.app.models import User
 from backend.app.schemas.auth import AuthResponse, ChangePasswordRequest, LoginRequest, RegisterRequest
 from backend.app.schemas.common import MessageResponse, UserRead
 from backend.app.services.auth_service import AuthService
+from backend.app.services.email_service import send_registration_emails
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -54,8 +56,9 @@ def _google_credentials() -> tuple[str, str]:
 
 
 @router.post("/register", response_model=AuthResponse)
-def register(payload: RegisterRequest, db: Session = Depends(get_db)):
+def register(background_tasks: BackgroundTasks, payload: RegisterRequest, db: Session = Depends(get_db)):
     user = AuthService(db).register(payload.full_name, payload.email, payload.password, payload.phone)
+    background_tasks.add_task(send_registration_emails, user.email, user.full_name)
     token = create_access_token(subject=str(user.id), extra={"role": user.role})
     return {"access_token": token, "token_type": "bearer", "user": user}
 
@@ -87,7 +90,7 @@ def google_start(request: Request, return_to: str | None = Query(default=None)):
         oauth_state,
         max_age=600,
         httponly=True,
-        secure=request.url.scheme == "https",
+        secure=settings.secure_cookies or request.url.scheme == "https",
         samesite="lax",
         path="/api/v1/auth/google",
     )
@@ -96,7 +99,7 @@ def google_start(request: Request, return_to: str | None = Query(default=None)):
         safe_return_to,
         max_age=600,
         httponly=True,
-        secure=request.url.scheme == "https",
+        secure=settings.secure_cookies or request.url.scheme == "https",
         samesite="lax",
         path="/api/v1/auth/google",
     )
@@ -105,6 +108,7 @@ def google_start(request: Request, return_to: str | None = Query(default=None)):
 
 @router.get("/google/callback")
 def google_callback(
+    background_tasks: BackgroundTasks,
     code: str | None = Query(default=None),
     state_value: str | None = Query(default=None, alias="state"),
     error: str | None = Query(default=None),
@@ -145,7 +149,10 @@ def google_callback(
     if not email or not profile.get("email_verified"):
         return _callback_redirect(callback_url, return_to, "email_not_verified")
 
-    token, _ = AuthService(db).login_or_create_google_user(email, str(profile.get("name") or ""))
+    is_new_account = db.query(User).filter(User.email == email).first() is None
+    token, user = AuthService(db).login_or_create_google_user(email, str(profile.get("name") or ""))
+    if is_new_account:
+        background_tasks.add_task(send_registration_emails, user.email, user.full_name)
     response = RedirectResponse(f"{callback_url}?{urlencode({'return_to': return_to})}#access_token={token}", status_code=status.HTTP_302_FOUND)
     response.delete_cookie("dukaanhub_google_oauth_state", path="/api/v1/auth/google")
     response.delete_cookie("dukaanhub_google_return_to", path="/api/v1/auth/google")

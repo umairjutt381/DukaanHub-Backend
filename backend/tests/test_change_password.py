@@ -73,3 +73,13 @@ def test_change_password_updates_credentials(db: Session, user: User) -> None:
     token, authenticated_user = AuthService(db).login(user.email, "ReplacementPass123")
     assert token
     assert authenticated_user.id == user.id
+
+
+def test_login_rejects_disabled_account(db: Session, user: User) -> None:
+    user.is_active = False
+    db.commit()
+
+    with pytest.raises(HTTPException) as exc_info:
+        AuthService(db).login(user.email, "CurrentPass123")
+
+    assert exc_info.value.status_code == 403

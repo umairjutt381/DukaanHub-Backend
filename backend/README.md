@@ -12,16 +12,16 @@ Run these commands from the repository root:
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r backend/requirements.txt
-cp .env .env
-uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 --reload
+cp .env.example .env
+uvicorn backend.app.main:app --host 127.0.0.1 --port 8001 --reload
 ```
 
 The API is then available at:
 
-- `http://127.0.0.1:8000/docs` — interactive OpenAPI documentation
-- `http://127.0.0.1:8000/api/v1/health` — health check
+- `http://127.0.0.1:8001/docs` — interactive OpenAPI documentation
+- `http://127.0.0.1:8001/api/v1/health` — health check
 
-The frontend's local environment points to this API at port `8000`.
+The frontend's local environment points to this API at port `8001`.
 
 ## Development catalog
 
@@ -41,17 +41,55 @@ and never fabricates customers, orders, payments, refunds, or webhook events.
 
 ## Configuration
 
-Settings are loaded from the repository-root `.env` file. Copy
-`../.env` to get the supported keys.
+Settings are loaded from the repository-root `.env` file. Copy `.env.example`
+to `.env` to get the supported keys.
 
 `DATABASE_URL` defaults to the local SQLite database at `dukaanhub.db`.
 PostgreSQL can be used by setting `DATABASE_URL` to a PostgreSQL SQLAlchemy
 URL and installing a compatible PostgreSQL driver. Do not commit credentials
 or real payment-gateway secrets.
 
-On startup the application creates the configured database tables and seeds
-the default data. Change `SECRET_KEY` and the default admin credentials before
-any production deployment.
+Local startup creates the configured database tables and seeds default data.
+Serverless production imports never mutate or seed the database; initialize or
+migrate the production database as a separate deployment step.
+
+## Production configuration
+
+Set `ENVIRONMENT=production`. Production startup intentionally fails when the
+JWT secret is weak, SQLite is selected, the frontend URL is not HTTPS, or CORS
+contains wildcard/non-HTTPS origins. At minimum configure:
+
+```env
+ENVIRONMENT=production
+SECRET_KEY=<random-value-of-at-least-32-characters>
+DATABASE_URL=postgresql+psycopg2://...
+FRONTEND_BASE_URL=https://dukaan-hub-frontend.vercel.app
+CORS_ORIGINS=https://dukaan-hub-frontend.vercel.app
+CORS_ORIGIN_REGEX=
+GOOGLE_CLIENT_ID=<google-web-client-id>
+GOOGLE_CLIENT_SECRET=<google-web-client-secret>
+GOOGLE_REDIRECT_URI=https://your-stable-backend-domain/api/v1/auth/google/callback
+EMAIL_ENABLED=true
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USERNAME=<smtp-account>
+SMTP_PASSWORD=<smtp-app-password>
+SMTP_USE_TLS=true
+EMAIL_FROM_ADDRESS=<verified-sender-address>
+EMAIL_FROM_NAME=DukaanHub
+EMAIL_ADMIN_RECIPIENT=<optional-store-notification-address>
+```
+
+Register that exact `GOOGLE_REDIRECT_URI` in Google Cloud Console. Register the
+frontend production origin as an authorized JavaScript origin. Preview URLs
+need separate explicit CORS and Google entries; do not use a temporary Vercel
+deployment URL as the production API base.
+
+Transactional email is sent after a new account is registered, after an
+order is created, and when an administrator updates an order status. Customers receive welcome, order-confirmation, and order-status messages;
+when `EMAIL_ADMIN_RECIPIENT` is set, the store also receives new-account and
+new-order notifications. SMTP delivery runs as a background task and a mail
+provider failure is logged without failing signup or checkout.
 
 ## Project layout
 
