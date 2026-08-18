@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     secret_key: str = "change-me-in-production"
     access_token_expire_minutes: int = 60 * 24
     refresh_token_expire_days: int = 7
+    password_reset_expire_minutes: int = 30
     algorithm: str = "HS256"
     database_url: str = os.environ.get("DATABASE_URL", f"sqlite:///{(ROOT_DIR / 'dukaanhub.db').as_posix()}")
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"

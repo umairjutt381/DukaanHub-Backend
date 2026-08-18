@@ -49,7 +49,8 @@ class EmailService:
                 if self.settings.smtp_use_tls and not self.settings.smtp_use_ssl:
                     smtp.starttls()
                 if self.settings.smtp_username:
-                    smtp.login(self.settings.smtp_username, self.settings.smtp_password)
+                    # Gmail displays App Passwords in groups separated by spaces.
+                    smtp.login(self.settings.smtp_username, "".join(self.settings.smtp_password.split()))
                 smtp.send_message(message)
             return True
         except (OSError, smtplib.SMTPException, ValueError):
@@ -73,6 +74,17 @@ def send_registration_emails(recipient: str, full_name: str) -> None:
             "New DukaanHub account registered",
             f"A new account was registered for {full_name} ({recipient}).",
         )
+
+
+def send_password_reset_email(recipient: str, full_name: str, reset_url: str) -> None:
+    safe_name = html.escape(full_name or "Customer")
+    safe_url = html.escape(reset_url, quote=True)
+    EmailService().send(
+        recipient,
+        "Reset your DukaanHub password",
+        f"Hi {full_name or 'Customer'},\n\nUse this link to reset your DukaanHub password:\n{reset_url}\n\nThis link expires in 30 minutes and can only be used once.",
+        f"<h2>Reset your password</h2><p>Hi {safe_name},</p><p><a href=\"{safe_url}\">Choose a new password</a></p><p>This link expires in 30 minutes and can only be used once.</p>",
+    )
 
 
 def send_order_emails(

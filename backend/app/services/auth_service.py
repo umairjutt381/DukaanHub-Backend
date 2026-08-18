@@ -81,3 +81,10 @@ class AuthService:
         user.hashed_password = get_password_hash(new_password)
         self.db.add(user)
         self.db.commit()
+
+    def set_password(self, user: User, new_password: str) -> str:
+        hashed_password = get_password_hash(new_password)
+        user.hashed_password = hashed_password
+        self.db.add(user)
+        self.db.commit()
+        return hashed_password
