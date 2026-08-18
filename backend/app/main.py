@@ -8,6 +8,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from fastapi import FastAPI
+from fastapi import Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -33,6 +34,9 @@ app = FastAPI(
     title=settings.app_name,
     version="1.0.0",
     description="DukaanHub production-ready commerce API",
+    docs_url=None if settings.is_production else "/docs",
+    redoc_url=None if settings.is_production else "/redoc",
+    openapi_url=None if settings.is_production else "/openapi.json",
 )
 
 app.add_middleware(
@@ -43,6 +47,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    if settings.is_production:
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    return response
 
 # Skip static file mounting in serverless environment (Vercel)
 # Static files should be served from a CDN or separate storage
@@ -81,4 +97,7 @@ if os.environ.get("VERCEL") != "1":
 
 @app.get("/")
 def root():
-    return {"name": "DukaanHub API", "docs": "/docs", "health": "/api/v1/health"}
+    payload = {"name": "DukaanHub API", "health": "/api/v1/health"}
+    if not settings.is_production:
+        payload["docs"] = "/docs"
+    return payload

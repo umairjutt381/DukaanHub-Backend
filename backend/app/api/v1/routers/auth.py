@@ -1,10 +1,12 @@
 import json
+import hashlib
 import secrets
+from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlencode, urlparse
 
 import httpx
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, BackgroundTasks, Cookie, Depends, HTTPException, Query, Request, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
@@ -12,9 +14,12 @@ from backend.app.core.config import get_settings
 from backend.app.core.deps import get_current_user
 from backend.app.core.security import create_access_token
 from backend.app.db.session import get_db
-from backend.app.schemas.auth import AuthResponse, ChangePasswordRequest, LoginRequest, RegisterRequest
+from backend.app.models import User
+from backend.app.schemas.auth import AuthResponse, ChangePasswordRequest, LoginRequest, PasswordResetConfirmRequest, PasswordResetRequest, RegisterRequest
 from backend.app.schemas.common import MessageResponse, UserRead
 from backend.app.services.auth_service import AuthService
+from backend.app.services.email_service import send_password_reset_email, send_registration_emails
+from backend.app.models.password_reset import PasswordResetToken
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -25,10 +30,10 @@ GOOGLE_USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo"
 
 def _safe_return_to(value: str | None) -> str:
     if not value or not value.startswith("/") or value.startswith("//"):
-        return "/account"
+        return "/"
     parsed = urlparse(value)
     if parsed.scheme or parsed.netloc or parsed.path in {"/login", "/register"} or parsed.path.startswith("/auth/"):
-        return "/account"
+        return "/"
     return value
 
 
@@ -54,8 +59,9 @@ def _google_credentials() -> tuple[str, str]:
 
 
 @router.post("/register", response_model=AuthResponse)
-def register(payload: RegisterRequest, db: Session = Depends(get_db)):
+def register(background_tasks: BackgroundTasks, payload: RegisterRequest, db: Session = Depends(get_db)):
     user = AuthService(db).register(payload.full_name, payload.email, payload.password, payload.phone)
+    background_tasks.add_task(send_registration_emails, user.email, user.full_name)
     token = create_access_token(subject=str(user.id), extra={"role": user.role})
     return {"access_token": token, "token_type": "bearer", "user": user}
 
@@ -64,6 +70,43 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
 def login(payload: LoginRequest, db: Session = Depends(get_db)):
     token, user = AuthService(db).login(payload.email, payload.password, payload.remember_me)
     return {"access_token": token, "token_type": "bearer", "user": user}
+
+
+@router.post("/forgot-password", response_model=MessageResponse)
+def forgot_password(background_tasks: BackgroundTasks, payload: PasswordResetRequest, db: Session = Depends(get_db)):
+    # Always return the same message so account existence cannot be enumerated.
+    user = db.query(User).filter(User.email == str(payload.email).strip().lower()).first()
+    if user and user.is_active:
+        raw_token = secrets.token_urlsafe(48)
+        db.query(PasswordResetToken).filter(
+            PasswordResetToken.user_id == user.id,
+            PasswordResetToken.used_at.is_(None),
+        ).update({"used_at": datetime.utcnow()})
+        db.add(PasswordResetToken(
+            user_id=user.id,
+            token_hash=hashlib.sha256(raw_token.encode()).hexdigest(),
+            expires_at=datetime.utcnow() + timedelta(minutes=get_settings().password_reset_expire_minutes),
+        ))
+        db.commit()
+        reset_url = f"{get_settings().frontend_base_url.rstrip('/')}/reset-password?token={raw_token}"
+        background_tasks.add_task(send_password_reset_email, user.email, user.full_name, reset_url)
+    return {"message": "If an account exists for that email, a password reset link has been sent."}
+
+
+@router.post("/reset-password", response_model=MessageResponse)
+def reset_password(payload: PasswordResetConfirmRequest, db: Session = Depends(get_db)):
+    token_hash = hashlib.sha256(payload.token.encode()).hexdigest()
+    reset = db.query(PasswordResetToken).filter(PasswordResetToken.token_hash == token_hash).first()
+    now = datetime.utcnow()
+    if not reset or reset.used_at is not None or reset.expires_at <= now:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This password reset link is invalid or has expired.")
+    user = db.query(User).filter(User.id == reset.user_id, User.is_active.is_(True)).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This password reset link is invalid or has expired.")
+    user.hashed_password = AuthService(db).set_password(user, payload.new_password)
+    reset.used_at = now
+    db.commit()
+    return {"message": "Password reset successfully. You can now sign in."}
 
 
 @router.get("/google/start")
@@ -87,7 +130,7 @@ def google_start(request: Request, return_to: str | None = Query(default=None)):
         oauth_state,
         max_age=600,
         httponly=True,
-        secure=request.url.scheme == "https",
+        secure=settings.secure_cookies or request.url.scheme == "https",
         samesite="lax",
         path="/api/v1/auth/google",
     )
@@ -96,7 +139,7 @@ def google_start(request: Request, return_to: str | None = Query(default=None)):
         safe_return_to,
         max_age=600,
         httponly=True,
-        secure=request.url.scheme == "https",
+        secure=settings.secure_cookies or request.url.scheme == "https",
         samesite="lax",
         path="/api/v1/auth/google",
     )
@@ -105,6 +148,7 @@ def google_start(request: Request, return_to: str | None = Query(default=None)):
 
 @router.get("/google/callback")
 def google_callback(
+    background_tasks: BackgroundTasks,
     code: str | None = Query(default=None),
     state_value: str | None = Query(default=None, alias="state"),
     error: str | None = Query(default=None),
@@ -145,7 +189,10 @@ def google_callback(
     if not email or not profile.get("email_verified"):
         return _callback_redirect(callback_url, return_to, "email_not_verified")
 
-    token, _ = AuthService(db).login_or_create_google_user(email, str(profile.get("name") or ""))
+    is_new_account = db.query(User).filter(User.email == email).first() is None
+    token, user = AuthService(db).login_or_create_google_user(email, str(profile.get("name") or ""))
+    if is_new_account:
+        background_tasks.add_task(send_registration_emails, user.email, user.full_name)
     response = RedirectResponse(f"{callback_url}?{urlencode({'return_to': return_to})}#access_token={token}", status_code=status.HTTP_302_FOUND)
     response.delete_cookie("dukaanhub_google_oauth_state", path="/api/v1/auth/google")
     response.delete_cookie("dukaanhub_google_return_to", path="/api/v1/auth/google")

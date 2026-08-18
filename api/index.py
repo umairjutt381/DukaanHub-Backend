@@ -1,5 +1,4 @@
 import sys
-import os
 from pathlib import Path
 
 # Add the project root to Python path
@@ -9,21 +8,6 @@ if str(ROOT_DIR) not in sys.path:
 
 # Import the FastAPI app and expose it for Vercel
 from backend.app.main import app as asgi_app
-from backend.app.db.session import Base, engine
-from backend.app.db.migrations import apply_compatibility_migrations
-from backend.app.db.init_db import seed_data
-from backend.app.db.session import SessionLocal
-
-# Initialize database on first load in Vercel
-if os.environ.get("VERCEL") == "1":
-    Base.metadata.create_all(bind=engine)
-    apply_compatibility_migrations(engine)
-    db = SessionLocal()
-    try:
-        seed_data(db)
-    finally:
-        db.close()
-
 # Vercel expects the ASGI app to be available as the module-level variable named 'app'
 app = asgi_app
 

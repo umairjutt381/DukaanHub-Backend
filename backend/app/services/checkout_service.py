@@ -13,6 +13,7 @@ from backend.app.models import Address, CartItem, Coupon, Notification, Order, O
 from backend.app.schemas.commerce import OrderCreate
 from backend.app.schemas.payments import PaymentRedirectResponse
 from backend.app.services.idempotency_service import IdempotencyService
+from backend.app.services.address_service import remember_checkout_address
 from backend.app.services.payment_settings import get_payment_method_enabled
 from backend.app.services.payments.factory import PaymentGatewayFactory
 from backend.app.services.payments.utils import redact_payload
@@ -89,6 +90,7 @@ class CheckoutService:
             return self._to_response(existing_order, payment)
 
         shipping_name, shipping_phone, shipping_address, billing_address = self._resolve_shipping(user, payload)
+        remember_checkout_address(self.db, user, shipping_name, shipping_phone, shipping_address)
         subtotal, discount, shipping_fee, tax, total, order_items = self._build_totals(user, payload)
         if not idempotency_key:
             idempotency_key = uuid.uuid4().hex
@@ -184,4 +186,3 @@ class CheckoutService:
             gateway_name=gateway_name or (GatewayName(payment.gateway_name) if payment else None),
             transaction_id=transaction_id or (payment.merchant_transaction_id if payment else None),
         )
-

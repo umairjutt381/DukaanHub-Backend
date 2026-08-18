@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from urllib.parse import urlencode
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session, selectinload
 
@@ -14,6 +15,7 @@ from backend.app.domain.payments.enums import GatewayName, PaymentMethod
 from backend.app.models import Order, Payment
 from backend.app.schemas.payments import CheckoutRequest, CODCollectResponse, PaymentInitiateRequest, PaymentRedirectResponse, PaymentStatusResponse, RefundRequest, RefundResponse
 from backend.app.services.checkout_service import CheckoutService
+from backend.app.services.email_service import send_order_emails
 from backend.app.services.payment_service import PaymentService
 from backend.app.services.payment_settings import get_payment_method_enabled
 from backend.app.services.payments.factory import PaymentGatewayFactory
@@ -42,16 +44,26 @@ async def _read_payload(request: Request) -> dict[str, Any]:
 
 
 def _frontend_redirect(path: str, params: dict[str, Any] | None = None) -> RedirectResponse:
-    query = ""
-    if params:
-        safe = {k: v for k, v in params.items() if v is not None}
-        query = "?" + "&".join(f"{k}={v}" for k, v in safe.items())
-    return RedirectResponse(url=f"{settings.frontend_base_url}{path}{query}", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+    safe = {key: value for key, value in (params or {}).items() if value is not None}
+    query = f"?{urlencode(safe)}" if safe else ""
+    return RedirectResponse(url=f"{settings.frontend_base_url.rstrip('/')}{path}{query}", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/orders/checkout", response_model=PaymentRedirectResponse)
-async def checkout_order(payload: CheckoutRequest, db: Session = Depends(get_db), user=Depends(get_current_user)):
-    return await CheckoutService(db).checkout(user, payload, payload.idempotency_key)
+async def checkout_order(background_tasks: BackgroundTasks, payload: CheckoutRequest, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    result = await CheckoutService(db).checkout(user, payload, payload.idempotency_key)
+    order = db.query(Order).options(selectinload(Order.items)).filter(Order.id == result.order_id).first()
+    if order:
+        background_tasks.add_task(
+            send_order_emails,
+            user.email,
+            user.full_name,
+            order.order_number,
+            order.total_amount,
+            order.currency,
+            [(item.product_name, item.quantity, item.total_price) for item in order.items],
+        )
+    return result
 
 
 @router.post("/initiate", response_model=PaymentRedirectResponse)
@@ -133,10 +145,10 @@ async def payment_return(gateway: str, request: Request, db: Session = Depends(g
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported payment gateway") from exc
     result = await PaymentService(db).verify_and_apply_callback(gateway_name, payload, dict(request.headers))
     if result["payment_status"] == "paid":
-        return _frontend_redirect("/payment/success", {"order_id": result["order_id"], "order_number": result["order_number"], "gateway": gateway_name.value})
+        return _frontend_redirect("/order-success", {"order": result["order_number"], "gateway": gateway_name.value})
     if result["payment_status"] in {"cancelled", "failed", "expired"}:
-        return _frontend_redirect(f"/payment/{result['payment_status']}", {"order_id": result["order_id"], "order_number": result["order_number"], "gateway": gateway_name.value})
-    return _frontend_redirect("/payment/pending", {"order_id": result["order_id"], "order_number": result["order_number"], "gateway": gateway_name.value})
+        return _frontend_redirect("/order-failed", {"order": result["order_number"], "gateway": gateway_name.value, "status": result["payment_status"]})
+    return _frontend_redirect("/track-order", {"order": result["order_number"], "gateway": gateway_name.value})
 
 
 @router.get("/status/{order_id}", response_model=PaymentStatusResponse)
