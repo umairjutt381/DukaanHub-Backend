@@ -1,9 +1,33 @@
 from pydantic import BaseModel, ConfigDict, Field
 
 from backend.app.domain.payments.enums import PaymentMethod
+from backend.app.schemas.common import PHONE_REGEX
 
 
 class AddressCreate(BaseModel):
+    label: str
+    full_name: str
+    phone: str = Field(pattern=PHONE_REGEX)
+    line1: str
+    line2: str | None = None
+    city: str
+    state: str | None = None
+    postal_code: str
+    country: str = "Pakistan"
+    is_default: bool = False
+
+
+class AddressRead(BaseModel):
+    """Address response schema.
+
+    Keep output validation separate from input validation. Older addresses may
+    contain values that were accepted before phone validation was introduced;
+    returning those records must not make the checkout page fail with a 500.
+    New and updated addresses still use the strict ``AddressCreate`` schema.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+    id: int
     label: str
     full_name: str
     phone: str
@@ -14,11 +38,6 @@ class AddressCreate(BaseModel):
     postal_code: str
     country: str = "Pakistan"
     is_default: bool = False
-
-
-class AddressRead(AddressCreate):
-    model_config = ConfigDict(from_attributes=True)
-    id: int
 
 
 class CartItemCreate(BaseModel):
@@ -47,7 +66,7 @@ class OrderItemRead(BaseModel):
 class OrderCreate(BaseModel):
     payment_method: PaymentMethod
     shipping_name: str
-    shipping_phone: str
+    shipping_phone: str = Field(pattern=PHONE_REGEX)
     shipping_address: str
     billing_address: str | None = None
     notes: str | None = None

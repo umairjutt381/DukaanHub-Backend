@@ -1,13 +1,14 @@
 from pydantic import BaseModel, EmailStr, Field
 
 from backend.app.schemas.common import UserRead
+from backend.app.schemas.common import PHONE_REGEX
 
 
 class RegisterRequest(BaseModel):
     full_name: str = Field(min_length=2, max_length=120)
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
-    phone: str | None = None
+    phone: str | None = Field(default=None, pattern=PHONE_REGEX)
     remember_me: bool = False
 
 
