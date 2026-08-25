@@ -5,6 +5,7 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
 
 from backend.app.domain.payments.enums import GatewayName, OrderStatus, PaymentMethod, PaymentStatus, WebhookProcessingStatus
+from backend.app.schemas.common import PHONE_REGEX
 
 
 class CheckoutRequest(BaseModel):
@@ -13,7 +14,7 @@ class CheckoutRequest(BaseModel):
     coupon_code: str | None = None
     idempotency_key: str | None = Field(default=None, max_length=80)
     shipping_name: str | None = None
-    shipping_phone: str | None = None
+    shipping_phone: str | None = Field(default=None, pattern=PHONE_REGEX)
     shipping_address: str | None = None
     billing_address: str | None = None
     notes: str | None = None
@@ -123,4 +124,3 @@ class WebhookEventRead(BaseModel):
     processing_status: WebhookProcessingStatus
     received_at: datetime
     processed_at: datetime | None = None
-

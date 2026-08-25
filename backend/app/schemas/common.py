@@ -1,6 +1,9 @@
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
+# DukaanHub currently serves Pakistan. Accept the common local and international
+# forms, but reject arbitrary short numbers, letters, and punctuation.
+PHONE_REGEX = r"^(?:\+92|0092|0)3[0-9]{9}$"
 
 class MessageResponse(BaseModel):
     message: str
@@ -21,7 +24,7 @@ class PaginatedResponse(BaseModel):
 class UserBase(BaseModel):
     full_name: str
     email: EmailStr
-    phone: str | None = None
+    phone: str | None = Field(default=None, pattern=PHONE_REGEX)
 
 
 class UserRead(UserBase):
@@ -50,4 +53,3 @@ class BrandRead(BaseModel):
     slug: str
     logo_url: str | None = None
     is_featured: bool
-

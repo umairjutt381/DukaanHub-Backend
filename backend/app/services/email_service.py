@@ -107,12 +107,12 @@ def send_order_emails(
         recipient,
         f"Order {order_number} received",
         (
-            f"Hi {full_name or 'Customer'},\n\nYour order {order_number} has been received.\n"
+            f"Hi {full_name or 'Customer'},\n\nYour order {order_number} has been created.\n"
             f"{text_items}\n\nTotal: {currency} {total_amount:,.2f}"
         ),
         (
-            f"<h2>Order received</h2><p>Hi {html.escape(full_name or 'Customer')},</p>"
-            f"<p>Your order <strong>{html.escape(order_number)}</strong> has been received.</p>"
+            f"<h2>Order created</h2><p>Hi {html.escape(full_name or 'Customer')},</p>"
+            f"<p>Your order <strong>{html.escape(order_number)}</strong> has been created.</p>"
             f"<ul>{html_items}</ul><p><strong>Total: {html.escape(currency)} {total_amount:,.2f}</strong></p>"
         ),
     )
